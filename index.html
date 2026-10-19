@@ -62,6 +62,16 @@ h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute
 .line .nm small{display:block;color:var(--muted)}
 .step{width:34px;height:34px;border-radius:50%;background:var(--bg);border:1px solid var(--line);font-size:20px;font-weight:700}
 .line .c{min-width:20px;text-align:center;font-weight:700}
+.line.ok{background:#e8f5e9;border-color:#a5d6a7}
+@media (prefers-color-scheme:dark){.line.ok{background:#1b3a1f;border-color:#2e7d32}}
+.line .st2{display:block;font-size:13px;font-weight:700;color:var(--red)}
+.line.ok .st2{color:var(--green)}
+.deliv{width:40px;height:40px;border-radius:50%;background:var(--green);color:#fff;font-size:20px;font-weight:800}
+.undo{width:40px;height:40px;border-radius:50%;background:var(--bg);border:1px solid var(--line);font-size:18px}
+.tab{font-size:14px;padding:12px 4px}
+.mesa.ok{background:#e8f5e9;border-color:#66bb6a}
+@media (prefers-color-scheme:dark){.mesa.ok{background:#1b3a1f}}
+.mesa .badge.ok{background:var(--green)}
 .empty{color:var(--muted);text-align:center;padding:18px}
 .bar{position:sticky;bottom:0;background:var(--bg);padding:12px 0 16px;border-top:1px solid var(--line);margin-top:12px}
 .total{display:flex;justify-content:space-between;font-size:22px;font-weight:800;margin-bottom:10px}
@@ -107,11 +117,13 @@ const PIN = DB_URL ? getPin() : "";
 const ref = path => `${DB_URL}/${encodeURIComponent(PIN)}/mesas${path}.json`;
 
 let db = {}, online = false;
-let view = null, tab = "Comida";
+let view = null, tab = null;   // tab: "Pedido" | "Comida" | "Bebida"
 const price = k => { const [c, n] = k.split("|"); return MENU[c].find(i => i[0] === n)[1] };
 const emoji = k => { const [c, n] = k.split("|"); return MENU[c].find(i => i[0] === n)[2] };
-const lines = m => Object.entries(db[m] || {}).filter(([k, q]) => q > 0 && k.includes("|"));
+const lines = m => Object.entries(db[m] || {}).filter(([k, q]) => q > 0 && !k.startsWith("E:"));
+const sent = (m, k) => Math.min((db[m] || {})["E:" + k] || 0, (db[m] || {})[k] || 0);   // entregados
 const count = m => lines(m).reduce((s, [, q]) => s + q, 0);
+const pending = m => count(m) - lines(m).reduce((s, [k]) => s + sent(m, k), 0);       // por entregar
 const total = m => lines(m).reduce((s, [k, q]) => s + q * price(k), 0);
 
 // Los cambios son incrementos atómicos de Firebase (+1/-1): dos móviles pidiendo
@@ -127,6 +139,17 @@ function add(m, k, d) {
   render();                                      // respuesta inmediata en pantalla
   if (q > 0) req(`/${m}`, "PATCH", {[k]: {".sv": {increment: d}}});
   else req(`/${m}/${key(k)}`, "DELETE");
+  const e = (db[m] || {})["E:" + k] || 0;
+  if (e > Math.max(q, 0)) deliver(m, k, Math.max(q, 0) - e);
+}
+// d = +1 marca una unidad como entregada, -1 la devuelve a pendiente.
+function deliver(m, k, d) {
+  const q = (db[m] || {})[k] || 0, e = Math.min(Math.max(((db[m] || {})["E:" + k] || 0) + d, 0), q);
+  if (!db[m]) return;
+  if (e > 0) db[m]["E:" + k] = e; else delete db[m]["E:" + k];
+  render();
+  if (e > 0) req(`/${m}`, "PATCH", {["E:" + k]: {".sv": {increment: d}}});
+  else req(`/${m}/${key("E:" + k)}`, "DELETE");
 }
 const clearMesa = m => { delete db[m]; render(); req(`/${m}`, "DELETE") };
 
@@ -157,35 +180,45 @@ function render() {
     $("sub").textContent = `${occ} de ${N_MESAS} mesas ocupadas · ${online ? "🟢 en directo" : "🔴 sin conexión"}`;
     app.innerHTML = `<div class="legend">
       <span><i class="dot" style="background:var(--line)"></i>Libre</span>
-      <span><i class="dot" style="background:var(--amber)"></i>Ocupada</span></div>
+      <span><i class="dot" style="background:var(--amber)"></i>Por entregar</span>
+      <span><i class="dot" style="background:#66bb6a"></i>Entregado</span></div>
       <div class="grid">${Array.from({length: N_MESAS}, (_, i) => i + 1).map(m => {
-        const o = count(m) > 0;
-        return `<button class="mesa ${o ? "ocupada" : ""}" data-m="${m}">
-          ${o ? `<span class="badge">${count(m)}</span>` : ""}
+        const o = count(m) > 0, pe = pending(m);
+        return `<button class="mesa ${o ? (pe ? "ocupada" : "ok") : ""}" data-m="${m}">
+          ${o ? `<span class="badge ${pe ? "" : "ok"}">${pe ? pe : "✓"}</span>` : ""}
           <span class="ico">🪑</span><span class="n">${m}</span>
           ${o ? `<span class="tot">${eur(total(m))}</span>` : `<span class="st">Libre</span>`}
+        ${o ? `<span class="st">${pe ? `⏳ ${pe} por entregar` : "✅ entregado"}</span>` : ""}
         </button>`}).join("")}</div>`;
-    app.querySelectorAll(".mesa").forEach(b => b.onclick = () => { view = +b.dataset.m; render(); scrollTo(0, 0) });
+    app.querySelectorAll(".mesa").forEach(b => b.onclick = () => { view = +b.dataset.m; tab = count(view) ? "Pedido" : "Comida"; render(); scrollTo(0, 0) });
     return;
   }
   const m = view, ls = lines(m);
   $("title").textContent = `🪑 Mesa ${m}`;
-  $("sub").textContent = (ls.length ? `${count(m)} artículos` : "Sin pedido") + (online ? "" : " · 🔴 sin conexión");
+  $("sub").textContent = (ls.length ? `${count(m)} artículos · ${pending(m) ? `⏳ ${pending(m)} por entregar` : "✅ todo entregado"}` : "Sin pedido") + (online ? "" : " · 🔴 sin conexión");
+  const TABS = [["Pedido", `📋 Pedido${ls.length ? ` (${count(m)})` : ""}`], ["Comida", "🌭 Comida"], ["Bebida", "🥤 Bebida"]];
+  const lineHtml = ([k, q]) => { const e = sent(m, k), ok = e >= q;
+    return `<div class="line ${ok ? "ok" : ""}"><div class="nm">${emoji(k)} ${k.split("|")[1]} <b>×${q}</b>
+        <small>${eur(price(k))} · ${k.split("|")[0]}</small>
+        <span class="st2">${ok ? "✅ Entregado" : `⏳ ${e}/${q} entregado`}</span></div>
+      ${e ? `<button class="undo" data-k="${k}" data-d="-1" aria-label="Deshacer entrega">↩</button>` : ""}
+      ${ok ? "" : `<button class="deliv" data-k="${k}" data-d="1" aria-label="Marcar entregado">✓</button>`}</div>` };
+  const body = tab === "Pedido"
+    ? (ls.length ? ls.map(lineHtml).join("") : `<div class="empty">Aún no hay nada pedido.<br>Elige Comida o Bebida para apuntar.</div>`)
+    : `<div class="items">${MENU[tab].map(([n, p, e]) => {
+        const q = (db[m] || {})[tab + "|" + n] || 0;
+        return `<button class="item" data-k="${tab}|${n}">${q ? `<span class="q">${q}</span>` : ""}<i class="em">${e}</i><b>${n}</b><span>${eur(p)}</span></button>`}).join("")}</div>
+      ${ls.length ? `<h2>Pedido</h2>${ls.map(([k, q]) => `<div class="line"><div class="nm">${emoji(k)} ${k.split("|")[1]}<small>${eur(price(k))}</small></div>
+        <button class="step" data-k="${k}" data-d="-1">−</button><span class="c">${q}</span><button class="step" data-k="${k}" data-d="1">+</button></div>`).join("")}` : ""}`;
   app.innerHTML = `
-    <div class="tabs">${Object.keys(MENU).map(c =>
-      `<button class="tab ${c === tab ? "on" : ""}" data-t="${c}">${c === "Comida" ? "🌭" : "🥤"} ${c}</button>`).join("")}</div>
-    <div class="items">${MENU[tab].map(([n, p, e]) => {
-      const q = (db[m] || {})[tab + "|" + n] || 0;
-      return `<button class="item" data-k="${tab}|${n}">${q ? `<span class="q">${q}</span>` : ""}<i class="em">${e}</i><b>${n}</b><span>${eur(p)}</span></button>`}).join("")}</div>
-    <h2>Pedido</h2>
-    ${ls.length ? ls.map(([k, q]) => `<div class="line"><div class="nm">${emoji(k)} ${k.split("|")[1]}<small>${eur(price(k))} · ${k.split("|")[0]}</small></div>
-      <button class="step" data-k="${k}" data-d="-1">−</button><span class="c">${q}</span><button class="step" data-k="${k}" data-d="1">+</button></div>`).join("")
-      : `<div class="empty">Toca un producto para añadirlo</div>`}
+    <div class="tabs">${TABS.map(([t, l]) => `<button class="tab ${t === tab ? "on" : ""}" data-t="${t}">${l}</button>`).join("")}</div>
+    ${body}
     <div class="bar"><div class="total"><span>Total</span><span>${eur(total(m))}</span></div>
       <div class="btns"><button class="btn" id="clear" ${ls.length ? "" : "disabled"}>Vaciar</button>
       <button class="btn pri" id="pay" ${ls.length ? "" : "disabled"}>Cobrar y liberar</button></div></div>`;
   app.querySelectorAll(".tab").forEach(b => b.onclick = () => { tab = b.dataset.t; render() });
   app.querySelectorAll(".item").forEach(b => b.onclick = () => add(m, b.dataset.k, 1));
+  app.querySelectorAll(".deliv, .undo").forEach(b => b.onclick = () => deliver(m, b.dataset.k, +b.dataset.d));
   app.querySelectorAll(".step").forEach(b => b.onclick = () => add(m, b.dataset.k, +b.dataset.d));
   const done = msg => { if (confirm(msg)) { view = null; clearMesa(m) } };
   if (ls.length) {
