@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#b3261e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Frankfurt · Comandas</title>
+<style>
+:root{
+  --bg:#f6f1ea; --card:#fff; --ink:#231a14; --muted:#7a6c62; --line:#e6ddd2;
+  --red:#b3261e; --red-d:#8f1d17; --green:#2e7d32; --amber:#f2b134; --amber-bg:#fff4d9;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#17120f; --card:#241c17; --ink:#f4ece4; --muted:#a39386; --line:#3a2f27; --amber-bg:#3a2d12}
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:16px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  padding-bottom:env(safe-area-inset-bottom);touch-action:manipulation}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+header{position:sticky;top:0;z-index:5;background:var(--red);color:#fff;
+  padding:calc(12px + env(safe-area-inset-top)) 16px 12px;display:flex;align-items:center;gap:12px}
+header h1{margin:0;font-size:20px;flex:1}
+header .sub{font-size:13px;opacity:.85}
+.back{font-size:26px;line-height:1;padding:0 8px 0 0;color:#fff}
+main{padding:16px;max-width:640px;margin:0 auto}
+
+/* mesas */
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.mesa{aspect-ratio:1;background:var(--card);border:2px solid var(--line);border-radius:18px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;position:relative;
+  transition:transform .08s}
+.mesa:active{transform:scale(.96)}
+.mesa .n{font-size:34px;font-weight:800}
+.mesa .st{font-size:12px;color:var(--muted)}
+.mesa .tot{font-size:14px;font-weight:700}
+.mesa.ocupada{background:var(--amber-bg);border-color:var(--amber)}
+.mesa .badge{position:absolute;top:8px;right:8px;background:var(--red);color:#fff;border-radius:99px;
+  min-width:22px;height:22px;font-size:12px;font-weight:700;display:grid;place-items:center;padding:0 6px}
+.legend{display:flex;gap:16px;font-size:13px;color:var(--muted);margin:0 0 12px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
+
+/* detalle */
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+.tab{flex:1;padding:12px;border-radius:12px;background:var(--card);border:2px solid var(--line);font-weight:700}
+.tab.on{background:var(--red);border-color:var(--red);color:#fff}
+.items{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px}
+.item{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;text-align:left;
+  display:flex;flex-direction:column;gap:4px;min-height:74px;position:relative}
+.item:active{background:var(--amber-bg)}
+.item b{font-size:15px}
+.item span{color:var(--muted);font-size:14px}
+.item .q{position:absolute;top:8px;right:8px;background:var(--green);color:#fff;border-radius:99px;
+  min-width:22px;height:22px;font-size:12px;font-weight:700;display:grid;place-items:center;padding:0 6px}
+h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:8px 0}
+.line{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);
+  border-radius:12px;padding:8px 10px;margin-bottom:8px}
+.line .nm{flex:1}
+.line .nm small{display:block;color:var(--muted)}
+.step{width:34px;height:34px;border-radius:50%;background:var(--bg);border:1px solid var(--line);font-size:20px;font-weight:700}
+.line .c{min-width:20px;text-align:center;font-weight:700}
+.empty{color:var(--muted);text-align:center;padding:18px}
+.bar{position:sticky;bottom:0;background:var(--bg);padding:12px 0 16px;border-top:1px solid var(--line);margin-top:12px}
+.total{display:flex;justify-content:space-between;font-size:22px;font-weight:800;margin-bottom:10px}
+.btns{display:flex;gap:10px}
+.btn{flex:1;padding:15px;border-radius:14px;font-weight:700;background:var(--card);border:2px solid var(--line)}
+.btn.pri{background:var(--green);border-color:var(--green);color:#fff}
+.btn:disabled{opacity:.4}
+</style>
+</head>
+<body>
+<header>
+  <button class="back" id="back" hidden aria-label="Volver">‹</button>
+  <div style="flex:1"><h1 id="title">Frankfurt</h1><div class="sub" id="sub"></div></div>
+</header>
+<main id="app"></main>
+
+<script>
+const MENU = {
+  Comida: [
+    ["Frankfurt clásico",3.5],["Frankfurt doble",5],["Frankfurt con queso",4],["Frankfurt picante",4],
+    ["Hamburguesa",6],["Bocadillo lomo",5],["Patatas fritas",3],["Nachos",4.5],["Ensalada",5.5],["Bravas",4]
+  ],
+  Bebida: [
+    ["Agua",1.5],["Coca-Cola",2.2],["Fanta",2.2],["Cerveza caña",2],["Cerveza jarra",3.5],
+    ["Vino copa",2.8],["Café",1.5],["Zumo",2.5],["Tinto de verano",3]
+  ]
+};
+const N_MESAS = 12;
+const eur = n => n.toFixed(2).replace(".", ",") + " €";
+
+let db = {}, online = false;
+let view = null, tab = "Comida";
+const price = k => { const [c, n] = k.split("|"); return MENU[c].find(i => i[0] === n)[1] };
+const lines = m => Object.entries(db[m] || {}).filter(([, q]) => q > 0);
+const count = m => lines(m).reduce((s, [, q]) => s + q, 0);
+const total = m => lines(m).reduce((s, [k, q]) => s + q * price(k), 0);
+
+// Los cambios se envían al servidor como operaciones (+1/-1), así dos móviles
+// pidiendo a la vez en la misma mesa se suman en vez de pisarse.
+function send(op) {
+  fetch("/api/op", {method: "POST", body: JSON.stringify(op)})
+    .then(r => r.json()).then(s => { db = s; render() }).catch(() => { online = false; render() });
+}
+function add(m, k, d) {
+  db[m] = db[m] || {};
+  db[m][k] = Math.max(0, (db[m][k] || 0) + d);   // respuesta inmediata en pantalla
+  if (!db[m][k]) delete db[m][k];
+  if (!Object.keys(db[m]).length) delete db[m];
+  render();
+  send({type: "add", mesa: m, key: k, d});
+}
+function connect() {
+  const es = new EventSource("/api/stream");
+  es.onmessage = e => { online = true; db = JSON.parse(e.data); render() };
+  es.onerror = () => { online = false; render() };   // EventSource reconecta solo
+}
+
+function render() {
+  const $ = id => document.getElementById(id), app = $("app");
+  $("back").hidden = view === null;
+  if (view === null) {
+    const occ = Object.keys(db).length;
+    $("title").textContent = "Frankfurt";
+    $("sub").textContent = `${occ} de ${N_MESAS} mesas ocupadas · ${online ? "🟢 en directo" : "🔴 sin conexión"}`;
+    app.innerHTML = `<div class="legend">
+      <span><i class="dot" style="background:var(--line)"></i>Libre</span>
+      <span><i class="dot" style="background:var(--amber)"></i>Ocupada</span></div>
+      <div class="grid">${Array.from({length: N_MESAS}, (_, i) => i + 1).map(m => {
+        const o = count(m) > 0;
+        return `<button class="mesa ${o ? "ocupada" : ""}" data-m="${m}">
+          ${o ? `<span class="badge">${count(m)}</span>` : ""}
+          <span class="n">${m}</span>
+          ${o ? `<span class="tot">${eur(total(m))}</span>` : `<span class="st">Libre</span>`}
+        </button>`}).join("")}</div>`;
+    app.querySelectorAll(".mesa").forEach(b => b.onclick = () => { view = +b.dataset.m; render(); scrollTo(0, 0) });
+    return;
+  }
+  const m = view, ls = lines(m);
+  $("title").textContent = `Mesa ${m}`;
+  $("sub").textContent = (ls.length ? `${count(m)} artículos` : "Sin pedido") + (online ? "" : " · 🔴 sin conexión");
+  app.innerHTML = `
+    <div class="tabs">${Object.keys(MENU).map(c =>
+      `<button class="tab ${c === tab ? "on" : ""}" data-t="${c}">${c === "Comida" ? "🌭" : "🥤"} ${c}</button>`).join("")}</div>
+    <div class="items">${MENU[tab].map(([n, p]) => {
+      const q = (db[m] || {})[tab + "|" + n] || 0;
+      return `<button class="item" data-k="${tab}|${n}">${q ? `<span class="q">${q}</span>` : ""}<b>${n}</b><span>${eur(p)}</span></button>`}).join("")}</div>
+    <h2>Pedido</h2>
+    ${ls.length ? ls.map(([k, q]) => `<div class="line"><div class="nm">${k.split("|")[1]}<small>${eur(price(k))} · ${k.split("|")[0]}</small></div>
+      <button class="step" data-k="${k}" data-d="-1">−</button><span class="c">${q}</span><button class="step" data-k="${k}" data-d="1">+</button></div>`).join("")
+      : `<div class="empty">Toca un producto para añadirlo</div>`}
+    <div class="bar"><div class="total"><span>Total</span><span>${eur(total(m))}</span></div>
+      <div class="btns"><button class="btn" id="clear" ${ls.length ? "" : "disabled"}>Vaciar</button>
+      <button class="btn pri" id="pay" ${ls.length ? "" : "disabled"}>Cobrar y liberar</button></div></div>`;
+  app.querySelectorAll(".tab").forEach(b => b.onclick = () => { tab = b.dataset.t; render() });
+  app.querySelectorAll(".item").forEach(b => b.onclick = () => add(m, b.dataset.k, 1));
+  app.querySelectorAll(".step").forEach(b => b.onclick = () => add(m, b.dataset.k, +b.dataset.d));
+  const done = msg => { if (confirm(msg)) { delete db[m]; view = null; render(); send({type: "clear", mesa: m}) } };
+  if (ls.length) {
+    $("clear").onclick = () => done(`¿Vaciar el pedido de la mesa ${m}?`);
+    $("pay").onclick = () => done(`Mesa ${m}: ${eur(total(m))}\n¿Cobrado? Se liberará la mesa.`);
+  }
+}
+document.getElementById("back").onclick = () => { view = null; render() };
+render();
+connect();
+</script>
+</body>
+</html>
