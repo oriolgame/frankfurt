@@ -90,30 +90,58 @@ const MENU = {
 const N_MESAS = 12;
 const eur = n => n.toFixed(2).replace(".", ",") + " €";
 
+// ---- Configuración: pega aquí la URL de tu Firebase Realtime Database ----
+const DB_URL = "";   // ej. "https://frankfurt-xxxx-default-rtdb.europe-west1.firebasedatabase.app"
+
+// El PIN es la "puerta" de los datos: todo cuelga de /<PIN>/mesas. Se pide una vez
+// y se recuerda; también se puede abrir el link con #PIN para no teclearlo.
+const getPin = () => {
+  let p = decodeURIComponent(location.hash.slice(1));
+  try { if (p) localStorage.pin = p; else p = localStorage.pin || "" } catch {}
+  if (!p) { p = (prompt("PIN del local:") || "").trim(); try { localStorage.pin = p } catch {} }
+  return p;
+};
+const PIN = DB_URL ? getPin() : "";
+const ref = path => `${DB_URL}/${encodeURIComponent(PIN)}/mesas${path}.json`;
+
 let db = {}, online = false;
 let view = null, tab = "Comida";
 const price = k => { const [c, n] = k.split("|"); return MENU[c].find(i => i[0] === n)[1] };
-const lines = m => Object.entries(db[m] || {}).filter(([, q]) => q > 0);
+const lines = m => Object.entries(db[m] || {}).filter(([k, q]) => q > 0 && k.includes("|"));
 const count = m => lines(m).reduce((s, [, q]) => s + q, 0);
 const total = m => lines(m).reduce((s, [k, q]) => s + q * price(k), 0);
 
-// Los cambios se envían al servidor como operaciones (+1/-1), así dos móviles
-// pidiendo a la vez en la misma mesa se suman en vez de pisarse.
-function send(op) {
-  fetch("/api/op", {method: "POST", body: JSON.stringify(op)})
-    .then(r => r.json()).then(s => { db = s; render() }).catch(() => { online = false; render() });
-}
+// Los cambios son incrementos atómicos de Firebase (+1/-1): dos móviles pidiendo
+// a la vez en la misma mesa se suman en vez de pisarse.
+const req = (path, method, body) =>
+  fetch(ref(path), {method, body: JSON.stringify(body)}).catch(() => { online = false; render() });
+const key = k => encodeURIComponent(k);
 function add(m, k, d) {
   db[m] = db[m] || {};
-  db[m][k] = Math.max(0, (db[m][k] || 0) + d);   // respuesta inmediata en pantalla
-  if (!db[m][k]) delete db[m][k];
+  const q = (db[m][k] || 0) + d;
+  if (q > 0) db[m][k] = q; else delete db[m][k];
   if (!Object.keys(db[m]).length) delete db[m];
-  render();
-  send({type: "add", mesa: m, key: k, d});
+  render();                                      // respuesta inmediata en pantalla
+  if (q > 0) req(`/${m}`, "PATCH", {[k]: {".sv": {increment: d}}});
+  else req(`/${m}/${key(k)}`, "DELETE");
+}
+const clearMesa = m => { delete db[m]; render(); req(`/${m}`, "DELETE") };
+
+// Aplica un evento de streaming de Firebase ({path, data}) al estado local.
+function applyEvent(path, data, merge) {
+  if (path === "/") { db = merge ? {...db, ...(data || {})} : (data || {}); return }
+  const [m, k] = path.slice(1).split("/").map(decodeURIComponent);
+  if (!k) { if (data == null) delete db[m]; else db[m] = merge ? {...db[m], ...data} : data; return }
+  if (data == null) { if (db[m]) { delete db[m][k]; if (!Object.keys(db[m]).length) delete db[m] } }
+  else (db[m] = db[m] || {})[k] = data;
 }
 function connect() {
-  const es = new EventSource("/api/stream");
-  es.onmessage = e => { online = true; db = JSON.parse(e.data); render() };
+  const es = new EventSource(ref(""));
+  es.onopen = () => { online = true; render() };
+  ["put", "patch"].forEach(t => es.addEventListener(t, e => {
+    online = true; const {path, data} = JSON.parse(e.data);
+    applyEvent(path, data, t === "patch"); render();
+  }));
   es.onerror = () => { online = false; render() };   // EventSource reconecta solo
 }
 
@@ -156,15 +184,16 @@ function render() {
   app.querySelectorAll(".tab").forEach(b => b.onclick = () => { tab = b.dataset.t; render() });
   app.querySelectorAll(".item").forEach(b => b.onclick = () => add(m, b.dataset.k, 1));
   app.querySelectorAll(".step").forEach(b => b.onclick = () => add(m, b.dataset.k, +b.dataset.d));
-  const done = msg => { if (confirm(msg)) { delete db[m]; view = null; render(); send({type: "clear", mesa: m}) } };
+  const done = msg => { if (confirm(msg)) { view = null; clearMesa(m) } };
   if (ls.length) {
     $("clear").onclick = () => done(`¿Vaciar el pedido de la mesa ${m}?`);
     $("pay").onclick = () => done(`Mesa ${m}: ${eur(total(m))}\n¿Cobrado? Se liberará la mesa.`);
   }
 }
 document.getElementById("back").onclick = () => { view = null; render() };
-render();
-connect();
+if (!DB_URL) document.getElementById("app").innerHTML =
+  '<div class="empty">Falta configurar <b>DB_URL</b> (Firebase) en index.html</div>';
+else { render(); connect(); }
 </script>
 </body>
 </html>
