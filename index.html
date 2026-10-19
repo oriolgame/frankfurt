@@ -23,6 +23,21 @@ header{position:sticky;top:0;z-index:5;background:var(--red);color:#fff;
   padding:calc(12px + env(safe-area-inset-top)) 16px 12px;display:flex;align-items:center;gap:12px}
 header h1{margin:0;font-size:20px;flex:1}
 header .sub{font-size:13px;opacity:.85}
+.hbtn{background:rgba(255,255,255,.18);color:#fff;border-radius:12px;padding:10px 12px;font-weight:700;font-size:14px}
+main.wide{max-width:1100px}
+.chips{display:flex;gap:8px;margin-bottom:12px}
+.chip{padding:9px 16px;border-radius:99px;background:var(--card);border:2px solid var(--line);font-weight:700}
+.chip.on{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+.resumen{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:14px;font-size:17px}
+.tickets{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;align-items:start}
+.ticket{background:var(--card);border:2px solid var(--line);border-radius:16px;overflow:hidden}
+.ticket .th{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--amber-bg);font-weight:800;font-size:18px}
+.ticket .th small{font-size:13px;font-weight:700;color:var(--muted)}
+.ticket.late .th{background:#fde0dd;color:#8f1d17}
+.ticket.late .th small{color:#8f1d17}
+.ticket .row{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--line);font-size:17px}
+.ticket .row .nm{flex:1}
+.ticket .all{display:block;width:100%;padding:13px;border-top:1px solid var(--line);font-weight:800;color:var(--green)}
 .back{font-size:26px;line-height:1;padding:0 8px 0 0;color:#fff}
 main{padding:16px;max-width:640px;margin:0 auto}
 
@@ -85,6 +100,7 @@ h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute
 <header>
   <button class="back" id="back" hidden aria-label="Volver">‹</button>
   <div style="flex:1"><h1 id="title">Frankfurt</h1><div class="sub" id="sub"></div></div>
+  <button class="hbtn" id="cmd" hidden>🧾 Comandero</button>
 </header>
 <main id="app"></main>
 
@@ -108,7 +124,7 @@ const DB_URL = "https://frankfurt-8ec46-default-rtdb.europe-west1.firebasedataba
 // El PIN es la "puerta" de los datos: todo cuelga de /<PIN>/mesas. Se pide una vez
 // y se recuerda; también se puede abrir el link con #PIN para no teclearlo.
 const getPin = () => {
-  let p = decodeURIComponent(location.hash.slice(1));
+  let p = decodeURIComponent(location.hash.slice(1)).split("/")[0];
   try { if (p) localStorage.pin = p; else p = localStorage.pin || "" } catch {}
   if (!p) { p = (prompt("PIN del local:") || "").trim(); try { localStorage.pin = p } catch {} }
   return p;
@@ -117,10 +133,10 @@ const PIN = DB_URL ? getPin() : "";
 const ref = path => `${DB_URL}/${encodeURIComponent(PIN)}/mesas${path}.json`;
 
 let db = {}, online = false;
-let view = null, tab = null;   // tab: "Pedido" | "Comida" | "Bebida"
+let view = /\/comandero$/.test(location.hash) ? "cmd" : null, tab = null, cf = "Todo";   // tab: "Pedido" | "Comida" | "Bebida"
 const price = k => { const [c, n] = k.split("|"); return MENU[c].find(i => i[0] === n)[1] };
 const emoji = k => { const [c, n] = k.split("|"); return MENU[c].find(i => i[0] === n)[2] };
-const lines = m => Object.entries(db[m] || {}).filter(([k, q]) => q > 0 && !k.startsWith("E:"));
+const lines = m => Object.entries(db[m] || {}).filter(([k, q]) => q > 0 && k.includes("|") && !k.startsWith("E:"));
 const sent = (m, k) => Math.min((db[m] || {})["E:" + k] || 0, (db[m] || {})[k] || 0);   // entregados
 const count = m => lines(m).reduce((s, [, q]) => s + q, 0);
 const pending = m => count(m) - lines(m).reduce((s, [k]) => s + sent(m, k), 0);       // por entregar
@@ -132,12 +148,14 @@ const req = (path, method, body) =>
   fetch(ref(path), {method, body: JSON.stringify(body)}).catch(() => { online = false; render() });
 const key = k => encodeURIComponent(k);
 function add(m, k, d) {
+  const nueva = !db[m] && d > 0;
   db[m] = db[m] || {};
+  if (nueva) db[m].T = Date.now();
   const q = (db[m][k] || 0) + d;
   if (q > 0) db[m][k] = q; else delete db[m][k];
   if (!Object.keys(db[m]).length) delete db[m];
   render();                                      // respuesta inmediata en pantalla
-  if (q > 0) req(`/${m}`, "PATCH", {[k]: {".sv": {increment: d}}});
+  if (q > 0) req(`/${m}`, "PATCH", {[k]: {".sv": {increment: d}}, ...(nueva && {T: {".sv": "timestamp"}})});
   else req(`/${m}/${key(k)}`, "DELETE");
   const e = (db[m] || {})["E:" + k] || 0;
   if (e > Math.max(q, 0)) deliver(m, k, Math.max(q, 0) - e);
@@ -171,9 +189,36 @@ function connect() {
   es.onerror = () => { online = false; render() };   // EventSource reconecta solo
 }
 
+// Comandero: todo lo pendiente de entregar, una ficha por mesa, la más antigua primero.
+const hace = t => { const min = Math.floor((Date.now() - t) / 60000); return min < 1 ? "ahora" : `hace ${min} min` };
+function renderCmd(app, $) {
+  const pend = (m, k, q) => cf === "Todo" || k.startsWith(cf + "|") ? q - sent(m, k) : 0;
+  const fichas = Object.keys(db).map(m => ({m, T: db[m].T, its: lines(m).map(([k, q]) => [k, pend(m, k, q)]).filter(([, n]) => n > 0)}))
+    .filter(f => f.its.length).sort((a, b) => (a.T || Infinity) - (b.T || Infinity));
+  const sum = {};
+  fichas.forEach(f => f.its.forEach(([k, n]) => sum[k] = (sum[k] || 0) + n));
+  $("title").textContent = "🧾 Comandero";
+  $("sub").textContent = `${fichas.length} mesas esperando · ${online ? "🟢 en directo" : "🔴 sin conexión"}`;
+  app.innerHTML = `<div class="chips">${["Todo", "Comida", "Bebida"].map(c => `<button class="chip ${c === cf ? "on" : ""}" data-f="${c}">${c === "Todo" ? "Todo" : c === "Comida" ? "🌭 Comida" : "🥤 Bebida"}</button>`).join("")}</div>
+    ${fichas.length ? `<div class="resumen">${Object.entries(sum).map(([k, n]) => `<b>${n}×</b> ${emoji(k)} ${k.split("|")[1]}`).join(" &nbsp;·&nbsp; ")}</div>
+    <div class="tickets">${fichas.map(f => `<div class="ticket ${f.T && Date.now() - f.T > 600000 ? "late" : ""}">
+      <div class="th"><span>🪑 Mesa ${f.m}</span><small>${f.T ? "⏱ " + hace(f.T) : ""}</small></div>
+      ${f.its.map(([k, n]) => `<div class="row"><span class="nm">${emoji(k)} ${k.split("|")[1]} <b>×${n}</b></span><button class="deliv" data-m="${f.m}" data-k="${k}" data-d="1" aria-label="Entregar uno">✓</button></div>`).join("")}
+      <button class="all" data-m="${f.m}">✅ Entregar todo</button></div>`).join("")}</div>`
+    : `<div class="empty" style="font-size:20px;padding:50px 0">🎉 Nada pendiente de entregar</div>`}`;
+  app.querySelectorAll(".chip").forEach(b => b.onclick = () => { cf = b.dataset.f; render() });
+  app.querySelectorAll(".deliv").forEach(b => b.onclick = () => deliver(+b.dataset.m, b.dataset.k, 1));
+  app.querySelectorAll(".all").forEach(b => b.onclick = () => {
+    const f = fichas.find(f => f.m == b.dataset.m); f.its.forEach(([k, n]) => deliver(f.m, k, n)) });
+}
+setInterval(() => { if (view === "cmd") render() }, 30000);   // refresca los "hace X min"
+
 function render() {
   const $ = id => document.getElementById(id), app = $("app");
   $("back").hidden = view === null;
+  $("cmd").hidden = view !== null;
+  app.parentElement.classList.toggle("wide", view === "cmd");
+  if (view === "cmd") return renderCmd(app, $);
   if (view === null) {
     const occ = Object.keys(db).length;
     $("title").textContent = "Frankfurt";
@@ -226,6 +271,7 @@ function render() {
     $("pay").onclick = () => done(`Mesa ${m}: ${eur(total(m))}\n¿Cobrado? Se liberará la mesa.`);
   }
 }
+document.getElementById("cmd").onclick = () => { view = "cmd"; render(); scrollTo(0, 0) };
 document.getElementById("back").onclick = () => { view = null; render() };
 if (!DB_URL) document.getElementById("app").innerHTML =
   '<div class="empty">Falta configurar <b>DB_URL</b> (Firebase) en index.html</div>';
